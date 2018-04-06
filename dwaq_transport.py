@@ -26,43 +26,6 @@ gd=g.create_dual()
 
 ##
 
-plt.figure(1).clf()
-g.plot_edges(lw=0.5,color='k')
-gd.plot_edges(lw=1.5,color='orange')
-
-##
-
-# class BC(object):
-#     pass
-# 
-# class DirichletPoint(BC):
-#     def __init__(self,gd,x,fn_t):
-#         self.gd=gd
-#         self.n=self.gd.select_nodes_nearest(x)
-#         self.x=x
-#         self.fn=fn_t
-#     def apply(self,M,J,D,t):
-#         M[self.n,:] = 0.0 # no exchange
-#         J[self.n]=0.0 # not a flux
-#         D[self.n]=self.fn(t)
-# 
-# class FluxPoint(BC):
-#     def __init__(self,gd,x,fn_t):
-#         self.gd=gd
-#         self.n=self.gd.select_nodes_nearest(x)
-#         self.x=x
-#         self.fn=fn_t
-#     def apply(self,M,J,D,t):
-#         # fn(t) => m3/s
-#         J[self.n] += self.fn(t) 
-#         
-# ocean=lambda t: 34.0
-# bcs= [DirichletPoint(gd=gd,x=(500024, 4197981),fn_t=ocean),
-#       DirichletPoint(gd=gd,x=(508239, 4188818),fn_t=ocean),
-#       DirichletPoint(gd=gd,x=(512505, 4177600),fn_t=ocean),
-#       DirichletPoint(gd=gd,x=(515507, 4166225),fn_t=ocean),
-#       DirichletPoint(gd=gd,x=(525144, 4154218),fn_t=ocean)]
-
 N=gd.Nnodes()
 bnds=hydro.read_bnd()
 bnd_map={} # negative BC index => name
@@ -77,7 +40,7 @@ for bnd in bnds:
 
 #scal_name='continuity'
 scal_name='salinity'
-
+N_boundary=np.sum( hydro.pointers[:,0]<0)
 boundary_C=np.zeros(N_boundary,np.float64) 
 
 if scal_name=='continuity':
@@ -91,12 +54,14 @@ elif scal_name=='salinity':
         if 'Sea' in name:
             boundary_C[bc_idx]=34
     scal=np.ones(N,np.float64)
-
     
 results=[scal]
 
 # Even at this time scale, some of the ocean segments
 # have negative values on the diagonal
+# It's not clear at the moment whether volume should be at the new or old
+# timestep - too complicated to work out here, need to go to pencil and paper.
+
 times=hydro.t_secs[1000:1000+125*48:8]
 
 for t_i in range(len(times)-1):
@@ -114,8 +79,6 @@ for t_i in range(len(times)-1):
     flows=hydro.flows(t0)
     # vol=hydro.volumes(t0)
     vol=hydro.volumes(t1)
-
-    N_boundary=np.sum( hydro.pointers[:,0]<0)
 
     for j,(seg_from,seg_to) in enumerate(hydro.pointers[:,:2]-1):
         if 1: # Advection, including boundaries
@@ -151,7 +114,16 @@ for t_i in range(len(times)-1):
 
     # Could this easily be made explicit or theta?
     # would help with stability
-    scal=np.dot(M,scal) + dt_s*J + D
+    if 1: # explicit
+        # scal1=np.dot(M,scal0) + dt_s*J + D
+        scal=np.dot(M,scal) + dt_s*J + D
+    else:
+        # implicit
+        # scal1=np.dot(M,scal1) + dt_s*J + D
+        # np.dot( (M-I), scal1 ) = -dt_s*J-D
+        # HERE
+        scal=np.linalg.solve( (M-np.eye(M.shape[0])), -dt_s*J-D )
+
     results.append(scal)
     
 
@@ -166,13 +138,6 @@ ccoll1=g.plot_cells(values=results[-1],ax=axs[1],cmap='jet')
 
 plt.colorbar(ccoll0,ax=axs[0])
 plt.colorbar(ccoll1,ax=axs[1])
-
-
-##
-
-
-
-
 
 
 ##
