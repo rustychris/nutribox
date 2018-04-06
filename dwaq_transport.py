@@ -62,6 +62,9 @@ results=[scal]
 # It's not clear at the moment whether volume should be at the new or old
 # timestep - too complicated to work out here, need to go to pencil and paper.
 
+# For explicit:
+# times=hydro.t_secs[1000:1000+125*48:8]
+# For 
 times=hydro.t_secs[1000:1000+125*48:8]
 
 for t_i in range(len(times)-1):
@@ -71,7 +74,8 @@ for t_i in range(len(times)-1):
     dt_s=t1-t0
 
     # Write in terms of concentrations
-    M=np.eye(N,dtype=np.float64)
+    # M=np.eye(N,dtype=np.float64)
+    M=np.zeros((N,N), dtype=np.float64)
 
     J=np.zeros(N,np.float64)
     D=np.zeros(N,np.float64)
@@ -114,15 +118,16 @@ for t_i in range(len(times)-1):
 
     # Could this easily be made explicit or theta?
     # would help with stability
-    if 1: # explicit
-        # scal1=np.dot(M,scal0) + dt_s*J + D
-        scal=np.dot(M,scal) + dt_s*J + D
+    I=np.eye(M.shape[0])
+    scal0=scal
+    if 0: # explicit
+        scal=scal0 + np.dot(M,scal0) + dt_s*J + D
     else:
         # implicit
-        # scal1=np.dot(M,scal1) + dt_s*J + D
-        # np.dot( (M-I), scal1 ) = -dt_s*J-D
-        # HERE
-        scal=np.linalg.solve( (M-np.eye(M.shape[0])), -dt_s*J-D )
+        # scal1=scal0 + np.dot(M,scal1) + dt_s*J + D
+        # scal1-np.dot(M,scal1) = scal0 + dt_s*J + D
+        rhs=scal0+dt_s*J+D
+        scal=np.linalg.solve(I-M, rhs)
 
     results.append(scal)
     
