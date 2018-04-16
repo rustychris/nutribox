@@ -64,8 +64,11 @@ results=[scal]
 
 # For explicit:
 # times=hydro.t_secs[1000:1000+125*48:8]
-# For 
-times=hydro.t_secs[1000:1000+125*48:8]
+# For implicit - can take longer timesteps
+# For theta, can take daily timesteps even with theta=0.5, 2 days
+# At 4 days, results are different.
+times=hydro.t_secs[1000:1000+125*48:2*48]
+theta=0.50
 
 for t_i in range(len(times)-1):
     # Set exchange matrix entries based on DWAQ data
@@ -120,14 +123,19 @@ for t_i in range(len(times)-1):
     # would help with stability
     I=np.eye(M.shape[0])
     scal0=scal
-    if 0: # explicit
+    if theta==0: # explicit
         scal=scal0 + np.dot(M,scal0) + dt_s*J + D
-    else:
-        # implicit
+    elif theta==1: # implicit
         # scal1=scal0 + np.dot(M,scal1) + dt_s*J + D
         # scal1-np.dot(M,scal1) = scal0 + dt_s*J + D
         rhs=scal0+dt_s*J+D
         scal=np.linalg.solve(I-M, rhs)
+    else:
+        # y1 = y0 + dt*(theta*f(t1,y1) + (1-theta)*f(t0,y0))
+        # y1-theta*dt*f(t1,y1) = y0 + (1-theta)*dt*f(t0,y0)
+        # explicit terms, and explicit portion of M
+        rhs=scal0+dt_s*J+D+np.dot((1-theta)*M,scal0)
+        scal=np.linalg.solve(I-theta*M,rhs)
 
     results.append(scal)
     
