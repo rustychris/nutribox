@@ -1,7 +1,9 @@
 """
+This code will likely be superseded by dwaq_transport.py
+
 Use a combination of resolved hydrodynamics, aggregated hydrodynamics,
 and observed tracer distributions (salinity, temp) to infer box-model
-scale transport in SF Bay
+scale transport in SF Bay.  
 """
 
 import os
