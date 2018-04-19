@@ -1,6 +1,6 @@
 """
-2018-04-05: Take the aggregated data generated in aggregate_wy2013c.py,
-and perform the lowpass, depth integration, and daily integration to 
+2018-04-05: Take the aggregated lowpass data generated in lowpass_wy2013c.py,
+and perform the depth integration, and daily integration to 
 get compact subtidal, 2D transport.
 """
 
@@ -56,8 +56,8 @@ scen=Scen(hydro=hydro,
           start_time=start_time,
           stop_time=stop_time)
 
-# os.path.exists(scen.base_path) and shutil.rmtree(scen.base_path)
-assert not os.path.exists(scen.base_path)
+os.path.exists(scen.base_path) and shutil.rmtree(scen.base_path)
+# assert not os.path.exists(scen.base_path)
 
 scen.cmd_default()
 

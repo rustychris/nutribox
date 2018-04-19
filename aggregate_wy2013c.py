@@ -28,6 +28,8 @@ agg_shp='boxes-v02.shp'
 hydro=Aggregate(hydro_in=hydro_unagg,
                 agg_shp=agg_shp)
 
+##
+
 class Scen(waq.Scenario):
     name="wy2013c_adj_agg"
     desc=('wy2013c_adj_agg',
@@ -39,7 +41,7 @@ class Scen(waq.Scenario):
         self.cmd_write_hydro()
 
 sec=datetime.timedelta(seconds=1)
-if 1:
+if 0:
     # short run for testing: start after some hydro spinup:
     start_time=hydro.time0+sec*hydro.t_secs[100]
     # and run for 1.5 days..
@@ -53,12 +55,12 @@ scen=Scen(hydro=hydro,
           start_time=start_time,
           stop_time=stop_time)
 
+# #
+
 # during dev:
-#os.path.exists(scen.base_path) and shutil.rmtree(scen.base_path)
+os.path.exists(scen.base_path) and shutil.rmtree(scen.base_path)
 # safer
-assert not os.path.exists(scen.base_path)
+# assert not os.path.exists(scen.base_path)
 
 scen.cmd_default()
 
-
-##
