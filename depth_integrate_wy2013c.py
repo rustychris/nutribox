@@ -1,7 +1,9 @@
 """
 2018-04-05: Take the aggregated lowpass data generated in lowpass_wy2013c.py,
-and perform the depth integration, and daily integration to 
-get compact subtidal, 2D transport.
+and perform the depth integration
+to get compact subtidal, 2D transport.
+
+Note that this may still have fine time steps.
 """
 
 import six
@@ -16,8 +18,6 @@ logger = logging.getLogger()
 import stompy.model.delft.waq_scenario as waq
 
 ##
-
-six.moves.reload_module(waq)
 
 hydro_lp=waq.HydroFiles(hyd_path='hydro-wy2013c_adj-agg_lp/com-wy2013c_adj_agg_lp.hyd')
 
@@ -34,8 +34,9 @@ class DepthAggregator(waq.HydroAggregator):
         
     def get_agg_k(self,proc,k,seg):
         return 0 # all layers to 1
-        
-hydro=DepthAggregator(hydro_in=hydro_lp)
+
+def get_hydro():
+    return DepthAggregator(hydro_in=hydro_lp)
 
 class Scen(waq.Scenario):
     name="wy2013c_adj_agg_lp_2d"
@@ -47,19 +48,24 @@ class Scen(waq.Scenario):
     def cmd_default(self):
         self.cmd_write_hydro()
 
-sec=datetime.timedelta(seconds=1)
+def get_scen():        
+    hydro=get_hydro()
+    sec=datetime.timedelta(seconds=1)
 
-start_time=hydro.time0+hydro.t_secs[ 0]*sec
-stop_time =hydro.time0+hydro.t_secs[-1]*sec
+    start_time=hydro.time0+hydro.t_secs[ 0]*sec
+    stop_time =hydro.time0+hydro.t_secs[-1]*sec
 
-scen=Scen(hydro=hydro,
-          start_time=start_time,
-          stop_time=stop_time)
+    return Scen(hydro=hydro,
+                start_time=start_time,
+                stop_time=stop_time)
 
-os.path.exists(scen.base_path) and shutil.rmtree(scen.base_path)
-# assert not os.path.exists(scen.base_path)
 
-scen.cmd_default()
+if __name__=='__main__':
+    scen=get_scen()
+    os.path.exists(scen.base_path) and shutil.rmtree(scen.base_path)
+    # assert not os.path.exists(scen.base_path)
+
+    scen.cmd_default()
 
 
 
