@@ -98,7 +98,8 @@ for run_dir in runs:
         ds.attrs['name']=scalar_name
         ds.to_netcdf( nc_fn )
 
-    nc_bc_fn=nc_fn.replace('.nc','-with_bc.nc')
+    # -with_bc2: the 2 indicates that it has concentrations, too.
+    nc_bc_fn=nc_fn.replace('.nc','-with_bc2.nc')
     
     if os.path.exists(nc_bc_fn) and (os.stat(nc_bc_fn).st_mtime >= os.stat(nc_fn).st_mtime):
         print("BC data already in place")
@@ -191,6 +192,9 @@ for run_dir in runs:
         agg_elements=aggregator.elt_global_to_agg_2d[hit_elements]
 
         element_mass_influx=np.zeros( (len(hyd.t_secs),Nagg), 'f8')
+        # This will first be used to sum flows, then used to normalize the
+        # the mass influx to get resulting concentration
+        element_conc_influx=np.zeros( (len(hyd.t_secs),Nagg), 'f8')
 
         # This is pretty slow - maybe 10 minutes without memmap, 2 minutes with the memmap code.
         # When there are many exchanges (e.g. stormwater) it's that much slower.
@@ -199,6 +203,7 @@ for run_dir in runs:
 
             for hit_exch,hit_conc,agg_elt in zip(hit_exchs,hit_concs,agg_elements):
                 element_mass_influx[t_idx,agg_elt] += flo[hit_exch] * hit_conc
+                element_conc_influx[t_idx,agg_elt] += flo[hit_exch] 
 
             if t_idx%100==0:
                 max_flux=element_mass_influx[t_idx,:].max()
@@ -208,11 +213,14 @@ for run_dir in runs:
         # Still need to lowpass.  These will be written out with the same
         # time resolution as the aggregated hydro, which has not been decimated
         # in time.
-
         print("Lowpassing...")
         for i in range(Nagg):
             element_mass_influx[:,i] = lp_hyd.lowpass(element_mass_influx[:,i])
+            element_conc_influx[:,i] = lp_hyd.lowpass(element_conc_influx[:,i])
 
+        # Finally, normalize to concentration here:
+        element_conc_influx[:,:] = element_mass_influx / element_conc_influx
+            
         # Data looks okay. Write that out
 
         # concentrations are daily
@@ -225,7 +233,8 @@ for run_dir in runs:
 
         # This assumes that all inflows enter with the same concentration.  That
         # won't be true for salinity, but okay for the conservative tracers.
-        conc['bc_inflow']= ('time','face'), element_mass_influx[time_sel,:]
+        conc['bc_mass_inflow']= ('time','face'), element_mass_influx[time_sel,:]
+        conc['bc_conc_inflow']= ('time','face'), element_conc_influx[time_sel,:]
         conc.to_netcdf(nc_bc_fn)
         
 # Fairly successful - missing

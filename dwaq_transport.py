@@ -6,6 +6,7 @@ aggregated, and depth-integrated.
 import os
 import matplotlib.pyplot as plt
 from matplotlib import collections
+import numpy as np 
 
 from stompy import utils
 from stompy.utils import add_to
@@ -18,12 +19,6 @@ from stompy.model.delft import dfm_grid
 
 import logging
 logger=logging.getLogger('transport')
-
-## 
-
-hydro=waq.HydroFiles('hydro-wy2013c_adj-agg_lp_2d/com-wy2013c_adj_agg_lp_2d.hyd')
-
-##
 
 def set_variables(obj,kws):
     """
@@ -58,8 +53,8 @@ class DwaqTransport(object):
         self.g=self.hydro.grid()
         # The original grid has some spatial relevance, but we need an even
         # simpler topological representation, which is essentially the dual.
-        self.gd=g.create_dual(center='centroid')
-        self.N=gd.Nnodes() # number of computational elements
+        self.gd=self.g.create_dual(center='centroid')
+        self.N=self.gd.Nnodes() # number of computational elements
         
     def setup_bcs(self):
         """
@@ -108,8 +103,8 @@ class DwaqTransport(object):
         """
         while self.t_idx+1 < len(self.times):
             # Set exchange matrix entries based on DWAQ data
-            t0=times[self.t_idx]
-            t1=times[self.t_idx+1]
+            t0=self.times[self.t_idx]
+            t1=self.times[self.t_idx+1]
             dt_s=t1-t0
 
             # Write in terms of concentrations
@@ -124,6 +119,8 @@ class DwaqTransport(object):
             vol=self.hydro.volumes(t1)
 
             boundary_C_per_scalar=[scal.boundary_C(t1)
+                                   for scal in self.scalars]
+            boundary_J_per_scalar=[scal.boundary_J(t1)
                                    for scal in self.scalars]
             J_per_scalar=[J.copy() for scal in self.scalars]
             
@@ -145,11 +142,16 @@ class DwaqTransport(object):
                     else:
                         bc_idx=(seg_src+1) # just undoing the -1 from above
                         # Probably there is a more efficient way to do this:
-                        for scal_i,(J,boundary_C) in enumerate(zip(J_per_scalar,boundary_C_per_scalar)):
-                            # print("Boundary flux j=%d bc_idx=%d seg_src=%d name=%s"%(j,bc_idx,seg_src+1,bnd_map[bc_idx]))
-                            J[seg_to] += boundary_C[-bc_idx-1] * flows[j] / vol[seg_to]
+                        for scal_i,(J,boundary_C,boundary_J) in enumerate(zip(J_per_scalar,
+                                                                              boundary_C_per_scalar,
+                                                                              boundary_J_per_scalar)):
+                            if boundary_C is not None:
+                                # print("Boundary flux j=%d bc_idx=%d seg_src=%d name=%s"%(j,bc_idx,seg_src+1,bnd_map[bc_idx]))
+                                J[seg_to] += boundary_C[-bc_idx-1] * flows[j] / vol[seg_to]
+                            if boundary_J is not None:
+                                J[:] += boundary_J[-bc_idx-1] / vol[:]
                             
-                if 1: # Exchange
+                if 0: # Exchange - disabled to debug bc issues
                     if seg_from>=0:
                         # Basic mixing:
                         # HERE - adjust to take into account length scales, areas
@@ -166,9 +168,9 @@ class DwaqTransport(object):
 
             for scal,J in zip(self.scalars,J_per_scalar):
                 state0=scal.state
-                if theta==0: # explicit
+                if self.theta==0: # explicit
                     scal.state[:]=state0 + np.dot(M,state0) + dt_s*J + D
-                elif theta==1: # implicit
+                elif self.theta==1: # implicit
                     # scal1=scal0 + np.dot(M,scal1) + dt_s*J + D
                     # scal1-np.dot(M,scal1) = scal0 + dt_s*J + D
                     rhs=state0+dt_s*J+D
@@ -177,8 +179,8 @@ class DwaqTransport(object):
                     # y1 = y0 + dt*(theta*f(t1,y1) + (1-theta)*f(t0,y0))
                     # y1-theta*dt*f(t1,y1) = y0 + (1-theta)*dt*f(t0,y0)
                     # explicit terms, and explicit portion of M
-                    rhs=state0+dt_s*J+D+np.dot((1-theta)*M,state0)
-                    scal.state[:]=np.linalg.solve(I-theta*M,rhs)
+                    rhs=state0+dt_s*J+D+np.dot((1-self.theta)*M,state0)
+                    scal.state[:]=np.linalg.solve(I-self.theta*M,rhs)
 
                 scal.record_state(t1)
 
@@ -188,8 +190,6 @@ class Scalar(object):
     """
     Track state, history, boundary conditions for a scalar
     """
-    boundary_C_fn=lambda t,x:x
-    initial_C_fn=lambda t,x:x
     state=None
     
     def __init__(self,name,transport,**kws):
@@ -200,9 +200,14 @@ class Scalar(object):
         set_variables(self,kws)
         
     def boundary_C(self,t):
-        return self.boundary_C_fn(t,self.transport.boundary_C_zero())
+        return None # same as self.transport.boundary_C_zero()
+    def boundary_J(self,t):
+        """
+        Mass flux
+        """
+        return None # same as self.transport.boundary_C_zero()
     def initial_C(self,t):
-        return self.initial_C_fn(t,self.transport.initial_C_zero())
+        return self.transport.initial_C_zero()
 
     def initialize(self,t):
         """
@@ -215,199 +220,4 @@ class Scalar(object):
         
     def record_state(self,t):
         self.history.append( (t,self.state.copy()) )
-    
-def zero_vec(t,x):
-    x[:]=0
-    return x
-def unit_vec(t,x):
-    x[:]=1.0
-    return x
 
-# Note! this does not integrate over the timesteps yet.
-# taking these long steps means that there is some loss
-# of continuity.
-transport=DwaqTransport(hydro,
-                        times=hydro.t_secs[1000:1000+125*48:2*48])
-
-salt=transport.add_scalar("salinity",initial_C_fn=zero_vec)
-
-@utils.add_to(salt)
-def boundary_C(self,t):
-    x=self.transport.boundary_C_zero()
-    x[:]=0.0 # freshwater sources
-    for bc_elt in self.transport.bnd_map:
-        bc_idx=-bc_elt-1
-        name=bnd_map[bc_elt]
-        if 'Sea' in name:
-            x[bc_idx]=34
-    return x
-    
-cont=transport.add_scalar("continuity",
-                          boundary_C_fn=unit_vec,
-                          initial_C_fn=unit_vec)
-
-transport.initialize()
-
-transport.loop()
-
-##
-
-plt.figure(1).clf()
-fig,axs=plt.subplots(1,2,num=1)
-
-ccoll0=g.plot_cells(values=salt.history[0][1],ax=axs[0],cmap='jet')
-
-ccoll1=g.plot_cells(values=salt.history[-1][1],ax=axs[1],cmap='jet')
-
-plt.colorbar(ccoll0,ax=axs[0])
-plt.colorbar(ccoll1,ax=axs[1])
-
-##
-
-salt=hydro.parameters()['salinity']
-
-plt.clf()
-g.plot_cells(values=salt.evaluate(t=t).data)
-
-##
-
-# For now, use 2D centroid of the cells, which are already the nodes of
-# the dual
-self=transport
-
-L=self.gd.edges_length() # 242
-
-# Aflux=
-
-# After updating the waq code, there are now 299 exchanges in the hydro,
-# vs. 48 boundary exchanges + 242 edges in the dual.
-
-# the dual has 141 nodes, and 242 edges.
-# the original grid has 578 edges, of which 324 are between real cells
-A=transport.hydro.areas(transport.hydro.t_secs[1]) # 299
-
-##
-
-poi=transport.hydro.pointers.copy()
-
-# internal exchanges
-poi0_int = poi[ poi[:,0]>=0, :2 ] - 1
-segs=transport.gd.nodes['x'][poi0_int]
-
-## 
-hydro_unagg=waq.HydroFiles("/opt/data/delft/sfb_dfm_v2/runs/wy2013c/DFM_DELWAQ_wy2013c_adj/wy2013c.hyd")
-g_orig=hydro_unagg.grid()
-
-##
-
-plt.figure(1).clf()
-
-fig,ax=plt.subplots(num=1)
-
-ccoll=transport.g.plot_cells(ax=ax,lw=1)
-ccoll.set_edgecolor('m')
-
-scoll=collections.LineCollection(segs,color='r',lw=2)
-transport.gd.plot_edges(color='k',lw=3,ax=ax)
-ax.add_collection(scoll)
-
-# g_orig.plot_edges(color='k',lw=0.5,ax=ax)
-# g_orig.plot_cells(ax=ax,centers=True,color='y')
-
-##
-
-# Slight problem --
-#  The exchanges in the aggregated hydro include some diagonal connections due to slightly
-#  messy layouts of cells relative to the aggregation polygons
-#  The grid geometry does not reflect those connections.
-
-# Soln A: nudge the aggregation polygon to follow existing edges
-#   Is it enough to just nudge the nodes? Nope.
-#   Forcing edges of the aggregation polygon to follow unaggregated edges is not as
-#   easy as one might hope, since it multiple aggregation edges may map to the same
-#   unaggregated edge.
-# Soln B: Map the unaggregated elements, then generate a grid from that. Might be able to
-#   simplify that grid a little.  But this generates non-simple polygons, with holes and
-#   multipart geometries, not to mention large numbers of segments
-# Soln C: Nudge the element mapping to respect adjacency in the input aggregation polygon.
-#  Getting there - but there is a discrepancy of 9 links, with the dual having 9 too few.
-#  There might be some issues with stale grids.  I'm counting 11 links from pointers which
-#  do not exist in the dual.  2 of those were edges inferred from the shapefile, but which
-#  did not include any unaggregated edges.  Easiest fix there is to avoid any edges in the
-#  agg_shp which do not map to any real edges.  There are still 11 cases where the pointers
-#  include an edge which is not present in the dual.
-
-six.moves.reload_module(waq)
-hydro_unagg=waq.HydroFiles("/opt/data/delft/sfb_dfm_v2/runs/wy2013c/DFM_DELWAQ_wy2013c_adj/wy2013c.hyd")
-
-class Aggregate(waq.HydroAggregator):
-    enable_write_symlink=False
-    sparse_layers=False
-    agg_boundaries=False
-
-agg_shp='boxes-v02.shp'
-hydro=Aggregate(hydro_in=hydro_unagg,
-                agg_shp=agg_shp)
-# Select steps of load_basic:
-# hydro.find_maxima()
-# hydro.init_elt_mapping()
-
-##
-
-# DEV
-agg_g=unstructured_grid.UnstructuredGrid.from_shp(agg_shp)
-
-# #
-self=hydro
-
-bad_edges=[]
-
-# First, identify problem edges
-for proc in range(self.nprocs):
-    print(proc)
-    nc=self.open_flowgeom_ds(p)
-    proc_global_ids=nc.FlowElemGlobalNr.values - 1  # make 0-based
-    ncg=dfm_grid.DFMGrid(nc)
-    
-    e2c=ncg.edge_to_cells()
-    for j in np.nonzero(e2c.min(axis=1)>=0)[0]:
-        loc_c1,loc_c2=e2c[j]
-        # which aggregation polygons do these map to?
-        glb_c1,glb_c2=proc_global_ids[ e2c[j] ]
-        agg_1,agg_2=self.elt_global_to_agg_2d[ [glb_c1,glb_c2] ]
-        if agg_1<0 or agg_2<0:
-            continue # not concerned about edges leaving the domain
-
-        agg_j=agg_g.cells_to_edge(agg_1,agg_2)
-        if agg_j is None:
-            print("proc %d, j=%d is a problem edge"%(proc,j))
-            bad_edges.append(j)
-            
-            # Try to find a new home for loc_c1:
-            agg_c2_nbrs=np.unique( agg_g.cell_to_cells(agg_2) )
-            agg_c2_nbrs=agg_c2_nbrs[ agg_c2_nbrs>=0 ]
-
-            new_agg_1=None
-            c1_poly=ncg.cell_polygon(loc_c1)
-            for agg_c2_nbr in agg_c2_nbrs:
-                nbr_poly=agg_g.cell_polygon(agg_c2_nbr)
-                if nbr_poly.intersects(c1_poly):
-                    new_agg_1=agg_c2_nbr
-            assert new_agg_1 is not None
-            self.elt_global_to_agg_2d[glb_c1]=new_agg_1
-
-##
-
-plot_wkb.plot_wkb(c1_poly,facecolor='m')
-
-##
-
-ncg.plot_edges(mask=bad_edges,color='m',lw=3)
-
-##
-
-agg_shp='boxes-v02.shp'
-
-# agg_wkb=wkb2shp.shp2geom(agg_shp)
-
-agg_g=unstructured_grid.UnstructuredGrid.from_shp(agg_shp)
