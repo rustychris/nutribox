@@ -187,7 +187,7 @@ class DwaqTransport(object):
                     else:
                         M[seg_to,seg_upwind]   += dt_s*flows[j] / vol1[seg_to]
                             
-                if 0: # Exchange 
+                if 1: # Exchange 
                     if seg_from>=0:
                         # Basic mixing:
                         # HERE - adjust to take into account length scales, areas

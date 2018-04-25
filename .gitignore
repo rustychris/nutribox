@@ -1,3 +1,4 @@
 __pycache__
 hydro-*
 scalar_data
+*.pyc
