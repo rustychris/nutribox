@@ -219,7 +219,10 @@ for run_dir in runs:
             element_conc_influx[:,i] = lp_hyd.lowpass(element_conc_influx[:,i])
 
         # Finally, normalize to concentration here:
-        element_conc_influx[:,:] = element_mass_influx / element_conc_influx
+        zero_flow=np.abs(element_conc_influx)<1e-6        
+        element_conc_influx[~zero_flow] = element_mass_influx[~zero_flow] / element_conc_influx[~zero_flow]
+        # could be nice to know a forced concentration even with zero flow, but not today
+        element_conc_influx[zero_flow] = 0.0
             
         # Data looks okay. Write that out
 

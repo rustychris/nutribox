@@ -120,9 +120,13 @@ class DwaqTransport(object):
 
             boundary_C_per_scalar=[scal.boundary_C(t1)
                                    for scal in self.scalars]
-            boundary_J_per_scalar=[scal.boundary_J(t1)
-                                   for scal in self.scalars]
             J_per_scalar=[J.copy() for scal in self.scalars]
+
+
+            for J,scal in zip(J_per_scalar,scalars):
+                boundary_J=scal.boundary_J(t1)
+                if boundary_J is not None:
+                    J[:] += boundary_J[:] / vol[:]
             
             for j,(seg_from,seg_to) in enumerate(self.hydro.pointers[:,:2]-1):
                 if 1: # Advection, including boundaries
@@ -142,16 +146,13 @@ class DwaqTransport(object):
                     else:
                         bc_idx=(seg_src+1) # just undoing the -1 from above
                         # Probably there is a more efficient way to do this:
-                        for scal_i,(J,boundary_C,boundary_J) in enumerate(zip(J_per_scalar,
-                                                                              boundary_C_per_scalar,
-                                                                              boundary_J_per_scalar)):
+                        for scal_i,(J,boundary_C) in enumerate(zip(J_per_scalar,
+                                                                   boundary_C_per_scalar)):
                             if boundary_C is not None:
                                 # print("Boundary flux j=%d bc_idx=%d seg_src=%d name=%s"%(j,bc_idx,seg_src+1,bnd_map[bc_idx]))
                                 J[seg_to] += boundary_C[-bc_idx-1] * flows[j] / vol[seg_to]
-                            if boundary_J is not None:
-                                J[:] += boundary_J[-bc_idx-1] / vol[:]
                             
-                if 0: # Exchange - disabled to debug bc issues
+                if 1: # Exchange 
                     if seg_from>=0:
                         # Basic mixing:
                         # HERE - adjust to take into account length scales, areas
