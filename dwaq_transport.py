@@ -67,11 +67,13 @@ class DwaqTransport(object):
             for bc_link in bnd[1]['link']:
                 self.bnd_map[bc_link]=bnd[0]
 
-    def add_scalar(self,name,**kws):
+    def add_scalar(self,name=None,scalar=None,**kws):
         """
         Register a scalar field to be transport
         """
-        scalar=Scalar(name,transport=self,**kws)
+        if scalar is None:
+            assert name is not None
+            scalar=Scalar(name,transport=self,**kws)
         self.scalars.append(scalar)
         return scalar
         
@@ -187,7 +189,7 @@ class DwaqTransport(object):
                     else:
                         M[seg_to,seg_upwind]   += dt_s*flows[j] / vol1[seg_to]
                             
-                if 1: # Exchange 
+                if 0: # Exchange 
                     if seg_from>=0:
                         # Basic mixing:
                         # HERE - adjust to take into account length scales, areas
