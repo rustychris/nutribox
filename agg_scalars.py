@@ -12,6 +12,7 @@ import stompy.model.delft.io as dio
 import stompy.model.delft.waq_scenario as waq
 from stompy.model.delft import dfm_grid
 import glob
+from collections import defaultdict
 
 ##
 
@@ -99,8 +100,13 @@ for run_dir in runs:
         ds.to_netcdf( nc_fn )
 
     # -with_bc2: the 2 indicates that it has concentrations, too.
-    nc_bc_fn=nc_fn.replace('.nc','-with_bc2.nc')
-    
+    # -with_bc3: testing issues with delta stormwater
+    nc_bc_fn=nc_fn.replace('.nc','-with_bc3.nc')
+
+    if os.path.exists(nc_bc_fn):
+        print("DEV - overwrite old")
+        os.unlink(nc_bc_fn)
+        
     if os.path.exists(nc_bc_fn) and (os.stat(nc_bc_fn).st_mtime >= os.stat(nc_fn).st_mtime):
         print("BC data already in place")
     else:
@@ -194,16 +200,50 @@ for run_dir in runs:
         element_mass_influx=np.zeros( (len(hyd.t_secs),Nagg), 'f8')
         # This will first be used to sum flows, then used to normalize the
         # the mass influx to get resulting concentration
-        element_conc_influx=np.zeros( (len(hyd.t_secs),Nagg), 'f8')
+        element_water_influx=np.zeros( (len(hyd.t_secs),Nagg), 'f8')
 
+        # Given an aggregated element index, what is the list of unaggregated
+        # boundary exchanges which contribute to it
+        exchs_for_agg_elt=defaultdict(list)
+        # Limit to boundary exchanges
+        all_bc_exchs=np.nonzero(poi[:,0]<0)[0]
+        for bc_exch in all_bc_exchs:
+            assert hyd.exch_to_2d_link[bc_exch]['sgn']==1
+            bc_link=hyd.exch_to_2d_link[bc_exch]['link']
+            bc_elt=hyd.links[bc_link,1]
+            agg_elt=aggregator.elt_global_to_agg_2d[bc_elt]
+            exchs_for_agg_elt[agg_elt].append(bc_exch)
+
+        #for agg_elt in np.unique(agg_elements):
+        #    print("Agg element %d has exchanges %s"%(agg_elt,exchs_for_agg_elt[agg_elt]))
+            
         # This is pretty slow - maybe 10 minutes without memmap, 2 minutes with the memmap code.
         # When there are many exchanges (e.g. stormwater) it's that much slower.
         for t_idx,t in enumerate(hyd.t_secs):
             flo=hyd.flows(hyd.t_secs[t_idx],memmap=True)
 
+            # 2018-05-05: it is wrong here to loop over only the hits.  The hits
+            # are a subset of unaggregated boundaries which carry a concentration
+            # of the current scalar.  But here we need to dilute those by the sum
+            # of *all* BC flows into this aggregated element.
             for hit_exch,hit_conc,agg_elt in zip(hit_exchs,hit_concs,agg_elements):
-                element_mass_influx[t_idx,agg_elt] += flo[hit_exch] * hit_conc
-                element_conc_influx[t_idx,agg_elt] += flo[hit_exch] 
+                # Clip this to inflow only, to be consistent with influx below.
+                element_mass_influx[t_idx,agg_elt] += flo[hit_exch].clip(0,np.inf) * hit_conc
+                
+                # Used to do this, but as noted above it only captures a subset
+                # of the flows into this element.
+                # element_conc_influx[t_idx,agg_elt] += flo[hit_exch]
+            for agg_elt in np.unique(agg_elements):
+                # sum BC flows over all boundary exchanges hitting this agg_elt
+                # NOTE: this could be negative, and there could be offsetting fluxes here.
+                # What's the "right" way to sum these?  When all flows are positive, it
+                # doesn't matter.  If all flows are negative, we'll be taking the upwind
+                # concentration anyway, which is inside the domain, so concentrations here
+                # don't matter. if the net flow into the element is zero, then advection
+                # isn't going to cut it.  The safest is to take the sum of inflows, and ignore
+                # outflows. This might be a problem if there are odd combinations of boundary
+                # flows for a single element!
+                element_water_influx[t_idx,agg_elt] += flo[exchs_for_agg_elt[agg_elt]].clip(0,np.inf).sum()
 
             if t_idx%100==0:
                 max_flux=element_mass_influx[t_idx,:].max()
@@ -216,11 +256,12 @@ for run_dir in runs:
         print("Lowpassing...")
         for i in range(Nagg):
             element_mass_influx[:,i] = lp_hyd.lowpass(element_mass_influx[:,i])
-            element_conc_influx[:,i] = lp_hyd.lowpass(element_conc_influx[:,i])
+            element_water_influx[:,i] = lp_hyd.lowpass(element_water_influx[:,i])
 
         # Finally, normalize to concentration here:
-        zero_flow=np.abs(element_conc_influx)<1e-6        
-        element_conc_influx[~zero_flow] = element_mass_influx[~zero_flow] / element_conc_influx[~zero_flow]
+        zero_flow=np.abs(element_water_influx)<1e-6
+        element_conc_influx=np.zeros_like(element_water_influx)
+        element_conc_influx[~zero_flow] = element_mass_influx[~zero_flow] / element_water_influx[~zero_flow]
         # could be nice to know a forced concentration even with zero flow, but not today
         element_conc_influx[zero_flow] = 0.0
             
@@ -238,6 +279,7 @@ for run_dir in runs:
         # won't be true for salinity, but okay for the conservative tracers.
         conc['bc_mass_inflow']= ('time','face'), element_mass_influx[time_sel,:]
         conc['bc_conc_inflow']= ('time','face'), element_conc_influx[time_sel,:]
+        conc['bc_water_inflow']= ('time','face'), element_water_influx[time_sel,:]
         conc.to_netcdf(nc_bc_fn)
         
 # Fairly successful - missing
