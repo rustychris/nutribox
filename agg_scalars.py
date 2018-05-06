@@ -99,7 +99,8 @@ for run_dir in runs:
         ds.to_netcdf( nc_fn )
 
     # -with_bc2: the 2 indicates that it has concentrations, too.
-    nc_bc_fn=nc_fn.replace('.nc','-with_bc2.nc')
+    # -with_bc3: testing the issue with delta stormwater 
+    nc_bc_fn=nc_fn.replace('.nc','-with_bc3.nc')
     
     if os.path.exists(nc_bc_fn) and (os.stat(nc_bc_fn).st_mtime >= os.stat(nc_fn).st_mtime):
         print("BC data already in place")
@@ -112,7 +113,6 @@ for run_dir in runs:
         # The boundaries are already aggregated, such that COYOTEd, EBAYS, and san_jose
         # are combined.  Bummer.  Is it possible to reach back to the run setup?
 
-        #orig_waq_dir='/opt/data/dwaq/sfbay_constracer/runs/wy2013c-20180404-%s'%scalar_name
         inp_fn=os.path.join(run_dir,'sfb_dfm_v2.inp')
 
         # Which exchanges participate in this scalar's source?

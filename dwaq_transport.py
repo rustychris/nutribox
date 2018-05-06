@@ -88,10 +88,12 @@ class DwaqTransport(object):
         """
         return np.zeros(self.N,np.float64)
 
-    def initialize(self):
+    def initialize(self,t_idx=0):
         """ Prepare initial conditions.  Call before beginning time stepping
+        Can be called to reset the state, with an optional starting time given
+        as an index into self.times
         """
-        self.t_idx=0
+        self.t_idx=t_idx
         self.t=self.times[self.t_idx]
 
         for scal in self.scalars:
@@ -117,14 +119,25 @@ class DwaqTransport(object):
             flows+=flow_i
         flows/=t1_i-t0_i # average
         return flows
+
+    def record_transport(self,**kws):
+        """
+        override to save a per-time step copy of M, J, etc.
+        """
+        pass
     
-    def loop(self):
+    def loop(self,t_idx_end=None):
         """
         Iterate over all time steps defined in self.times,
         Assumes that current scalar state is consistent with model time
         self.t
         """
-        while self.t_idx+1 < len(self.times):
+        if t_idx_end is None:
+            t_idx_end=len(self.times)
+        else:
+            t_idx_end=min(t_idx_end,len(self.times))
+            
+        while self.t_idx+1 < t_idx_end:
             # Set exchange matrix entries based on DWAQ data
             t0=self.times[self.t_idx]
             t1=self.times[self.t_idx+1]
@@ -228,6 +241,7 @@ class DwaqTransport(object):
                 scal.record_state(t1)
                 scal.J=J
 
+            self.record_transport(M=M,J_per_scalar=J_per_scalar,Vratio=Vratio)
             self.t_idx+=1
     
 class Scalar(object):
@@ -259,6 +273,7 @@ class Scalar(object):
         to time stepping.  This is where initial conditions are used to populate model state,
         and that initial state is recorded in the history
         """
+        self.history=[] # in case the simulation is reset
         self.state=self.initial_C(t)
         self.record_state(t)
         
