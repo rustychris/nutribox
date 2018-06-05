@@ -29,13 +29,13 @@ six.moves.reload_module(dwaq_transport)
 ## 
 
 transport=dwaq_transport.DwaqTransport(hydro,
-                                       times=hydro.t_secs[::2*48][50:100])
+                                       times=hydro.t_secs[::48][50:150])
 
 transport.history=[]
 
-#@utils.add_to(transport)
-#def record_transport(self,**kws):
-#    self.history.append(kws)
+@utils.add_to(transport)
+def record_transport(self,**kws):
+    self.history.append(kws)
     
 # Load boundary info for continuity:
 exch_is_bc=(transport.hydro.pointers[:,0]<0)
@@ -61,11 +61,11 @@ all_scalars=[
     'lg','marin5','sonoma_valley','stormwater','south_sf','sf_southeast','chevron',
     'yountville']
 
+# While testing:
+all_scalars=['stormwater','valero','vallejo','cccsd','fs']
+
 for scalar_name in all_scalars:
-    scalar_data_fn="scalar_data/%s-with_bc3.nc"%scalar_name
-    if not os.path.exists(scalar_data_fn):
-        scalar_data_fn="scalar_data/%s-with_bc2.nc"%scalar_name
-        print("Reverting to old %s as it does not exist"%scalar_data_fn)
+    scalar_data_fn="scalar_data_agg_his/%s.nc"%scalar_name
     scalar_data=xr.open_dataset(scalar_data_fn)
     scalar_data['t_sec']=('time',), (scalar_data.time.values - utils.to_dt64(transport.hydro.time0))/np.timedelta64(1,'s')
     scal=DwaqScalar(name=scalar_name,transport=transport,scalar_data=scalar_data)
@@ -123,7 +123,7 @@ def scalar_constraints(scal,tidx0,tidx1):
     if 1:
         norm_factors=C_real0*vol1
         low_end= norm_factors[ norm_factors>0 ].min()
-        norm_factors += low_end # avoid division by zero!
+        norm_factors += 0.1*low_end # avoid division by zero!
         error_vector[:] /= norm_factors
         scal_M_block[:] /= norm_factors[:,None]
 
@@ -143,7 +143,7 @@ def scalar_constraints(scal,tidx0,tidx1):
 M_blocks=[]
 error_vectors=[]
 
-for t_idx0 in range(0,48,4):
+for t_idx0 in range(0,100,1):
     print("Looping from t_idx=%d"%t_idx0)
     # How much of this can be re-done?    
     transport.initialize(t_idx=t_idx0)
@@ -160,10 +160,11 @@ combined_error=np.concatenate(error_vectors)
 ##
 
 # still more mottled than ideal.
-# D_lsq,residuals,rank,s=np.linalg.lstsq(combined_M,combined_error,rcond=None)
+# D,residuals,rank,s=np.linalg.lstsq(combined_M,combined_error,rcond=None)
 
 from scipy import optimize
-D_lsq_nn,rnorm=optimize.nnls(combined_M,combined_error)
+D,rnorm=optimize.nnls(combined_M,combined_error)
+
 
 ##
 
@@ -172,7 +173,7 @@ fig=plt.figure(20)
 fig.clf()
 
 transport.g.plot_cells(lw=0.5)
-ecoll=transport.gd.plot_edges(values=np.log10(D_lsq_nn.clip(1,np.inf)))
+ecoll=transport.gd.plot_edges(values=np.log10(D.clip(1,np.inf)))
 ecoll.set_cmap('jet')
 ecoll.set_clim([0,10])
 
@@ -181,8 +182,9 @@ fig.axes[0].axis('equal')
 ##
 
 # Take a look at the error fields
+storm_idx=0 # was 36 in old run.
 
-scal_i=36
+scal_i=storm_idx
 scal=transport.scalars[scal_i]
 
 plt.figure(3).clf()
@@ -244,66 +246,71 @@ fig.tight_layout()
 
 # Run for more time steps than above
 transport.initialize(t_idx=2)
-transport.loop(t_idx_end=48+40)
+transport.loop(t_idx_end=100)
 
 ## 
 # alameda=transport.gd.select_nodes_nearest( plt.ginput()[0] )
 alameda=29
-
 cell=alameda
-cell_title="Alameda"
 
-origs=[]
-preds=[]
+def plot_budget(cell,scalar_name,cell_name):
+    origs=[]
+    preds=[]
 
-# scal=transport.scalars[15] # ebda
-scal=transport.scalars[36] # stormwater
+    scal=[ s
+           for s in transport.scalars
+           if s.name==scalar_name ][0]
 
-times=[]
-for tidx in range(40):
-    dt64=np.datetime64(transport.hydro.time0) + transport.times[tidx]*np.timedelta64(1,'s')
-    times.append( dt64 )
-    preds.append( scal.history[tidx][1][alameda] )
-    origs.append( scal.initial_C(scal.history[tidx][0])[alameda] )
+    times=[]
 
-fig=plt.figure(5)
-fig.clf()
+    pred_times=[]
+    orig_times=[]
 
-plt.plot( times, preds, label='pred %s at %s'%(scal.name,cell_title))
-plt.plot( times, origs, label='orig %s at %s'%(scal.name,cell_title))
-plt.legend()
+    def sec_to_dt(sec):
+        return np.datetime64(transport.hydro.time0) + sec*np.timedelta64(1,'s')
 
-fig.autofmt_xdate()
+    M_sample=transport.history[-1]['M']
+    sel_cols=np.nonzero( np.abs(M_sample[alameda,:]) + np.abs(M_sample[:,alameda]) )[0]
+    
+    for hidx in range(len(scal.history)):
+        preds.append( scal.history[hidx][1][alameda] )
+        pred_times.append( sec_to_dt(scal.history[hidx][0]) )
+        
+        origs.append( scal.initial_C(scal.history[hidx][0])[alameda] )
+        orig_times.append( sec_to_dt(scal.history[hidx][0]) )
 
-##
-#delta=transport.gd.select_nodes_nearest( plt.ginput()[0] )
-delta=77
+        # And the flux terms from M:
+        M=transport.history[hidx]['M']
+        delta_c=np.dot(M,scal.history[hidx][1])
+        
 
+    fig=plt.figure(5)
+    fig.clf()
+    fig,(ax,ax_Q)=plt.subplots(2,1,num=5,sharex=True,sharey=True)
 
-# Delta's stormwater concentration increases well beyond any
-# adjacent cells, so this can't be numerical dispersion from
-# advection.
-tidx=0
-M=transport.history[tidx]['M']
-J_per_scalar=transport.history[tidx]['J_per_scalar']
-Vratio=transport.history[tidx]['Vratio']
+    ax.plot( utils.to_dnum(np.array(pred_times)), preds, label='pred %s at %s'%(scal.name,cell_name))
+    ax.plot( utils.to_dnum(np.array(orig_times)), origs, label='orig %s at %s'%(scal.name,cell_name))
+    ax.legend()
+    ax.xaxis.axis_date()
 
-# After "fixing" the data, this is all zero.
-J_stormwater=J_per_scalar[36] # 141
+    fig.autofmt_xdate()
+
+plot_budget(cell=alameda,scalar_name='stormwater',cell_name='alameda')
+
+    
+## 
+
+# So what's up with the budget for predicting stormwater at Alameda?
+plt.figure(25).clf()
+M=transport.history[-1]['M']
+
+fig,axs=plt.subplots(1,2,sharex=True,sharey=True,num=25)
+
+transport.g.plot_cells(values=M[alameda,:],ax=axs[0])
+transport.g.plot_cells(values=M[:,alameda],ax=axs[1])
+axs[0].axis('equal')
 
 ## 
-plt.figure(12).clf()
-fig,ax=plt.subplots(num=12)
-
-# Sure enough, Delta is really high here, at 1e-6
-# which comes out to 0.09/day
-transport.g.plot_cells(values=J_stormwater,ax=ax)
-# transport.g.plot_cells(values=per_element,ax=ax)
-# transport.g.plot_cells(values=Q*86400)
-ax.axis('equal')
-
-##
-
 # Backtracking to find where that J_stormwater into the Delta
 # came from
 scalar_name='stormwater'
