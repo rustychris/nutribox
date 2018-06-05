@@ -159,13 +159,15 @@ combined_error=np.concatenate(error_vectors)
     
 ##
 
-# After fixing the EBDA bug, this is better, though still more
-# mottled than ideal.
+# still more mottled than ideal.
 # D_lsq,residuals,rank,s=np.linalg.lstsq(combined_M,combined_error,rcond=None)
 
 from scipy import optimize
 D_lsq_nn,rnorm=optimize.nnls(combined_M,combined_error)
-## 
+
+##
+
+# Show the inferred dispersions
 fig=plt.figure(20)
 fig.clf()
 
@@ -178,9 +180,7 @@ fig.axes[0].axis('equal')
 
 ##
 
-# Infer some exchanges, then apply in the forward model to make sure
-# that the optimization is doing the right thing.
-# Before that, just take a look at the error fields
+# Take a look at the error fields
 
 scal_i=36
 scal=transport.scalars[scal_i]
@@ -241,29 +241,44 @@ fig.tight_layout()
 ##
 
 # What is the time series of concentration at Alameda Creek look like?
+
+# Run for more time steps than above
+transport.initialize(t_idx=2)
+transport.loop(t_idx_end=48+40)
+
+## 
 # alameda=transport.gd.select_nodes_nearest( plt.ginput()[0] )
 alameda=29
 
-#delta=transport.gd.select_nodes_nearest( plt.ginput()[0] )
-delta=77
+cell=alameda
+cell_title="Alameda"
 
 origs=[]
 preds=[]
 
-scal=transport.scalars[15] # ebda
-# scal=transport.scalars[36] # stormwater
+# scal=transport.scalars[15] # ebda
+scal=transport.scalars[36] # stormwater
 
+times=[]
 for tidx in range(40):
+    dt64=np.datetime64(transport.hydro.time0) + transport.times[tidx]*np.timedelta64(1,'s')
+    times.append( dt64 )
     preds.append( scal.history[tidx][1][alameda] )
     origs.append( scal.initial_C(scal.history[tidx][0])[alameda] )
 
-plt.figure(5).clf()
+fig=plt.figure(5)
+fig.clf()
 
-plt.plot( preds, label='pred')
-plt.plot( origs, label='orig')
+plt.plot( times, preds, label='pred %s at %s'%(scal.name,cell_title))
+plt.plot( times, origs, label='orig %s at %s'%(scal.name,cell_title))
 plt.legend()
 
+fig.autofmt_xdate()
+
 ##
+#delta=transport.gd.select_nodes_nearest( plt.ginput()[0] )
+delta=77
+
 
 # Delta's stormwater concentration increases well beyond any
 # adjacent cells, so this can't be numerical dispersion from

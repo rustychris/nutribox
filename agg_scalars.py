@@ -36,20 +36,41 @@ hyd=waq.HydroFiles(os.path.join(waq_hyd_dir,"wy2013c.hyd"))
 
 
 # Not needed, right?
-# hydro_2d=waq.HydroFiles('hydro-wy2013c_adj-agg_lp_2d/com-wy2013c_adj_agg_lp_2d.hyd')
+agg_lp_2d_dir='hydro-wy2013c_adj-agg_lp_2d'
+hydro_2d=waq.HydroFiles('hydro-wy2013c_adj-agg_lp_2d/com-wy2013c_adj_agg_lp_2d.hyd')
 
 
 import lowpass_wy2013c
 lp_secs=lowpass_wy2013c.lp_secs
 lp_hyd=lowpass_wy2013c.get_hydro()
 
+## 
+
+npad=int(5*lp_secs / 86400.)
+daily_pad=np.zeros(npad)
+from stompy import filters
+def lowpass_daily(data):
+    """
+    Replicate as much as possible the lowpass from lowpass_wy2013c, but
+    applied to daily data.
+    """
+    flow_padded=np.concatenate( ( daily_pad, 
+                                  data,
+                                  daily_pad) )
+    lp_flows=filters.lowpass(flow_padded,
+                             cutoff=lp_secs,dt=86400.)
+    lp_flows=lp_flows[npad:-npad] # trim the pad
+    return lp_flows
+
+        
 ##
-scalar_dir='scalar_data'
+scalar_dir='scalar_data_agg_lp_2d'
 os.path.exists(scalar_dir) or os.makedirs(scalar_dir)
 
 runs=glob.glob("/opt/data/dwaq/sfbay_constracer/runs/wy2013c-*")
 
 for run_dir in runs:
+    print("Processing run %s"%run_dir)
     scalar_name=run_dir.split('-')[-1]
 
     #--- Integrate concentrations from the model output
@@ -101,7 +122,8 @@ for run_dir in runs:
 
     # -with_bc2: the 2 indicates that it has concentrations, too.
     # -with_bc3: testing issues with delta stormwater
-    nc_bc_fn=nc_fn.replace('.nc','-with_bc3.nc')
+    # -with_bc4: lowpassing the concentrations
+    nc_bc_fn=nc_fn.replace('.nc','-with_bc4.nc')
 
     if os.path.exists(nc_bc_fn) and (os.stat(nc_bc_fn).st_mtime >= os.stat(nc_fn).st_mtime):
         print("BC data already in place")
@@ -119,57 +141,38 @@ for run_dir in runs:
         # Which exchanges participate in this scalar's source?
         boundaries,bc_blocks=dio.parse_boundary_conditions(inp_fn) # get 2480 boundaries
 
-        if 0:
-            # Fragile approach
-            # luckily I know that the boundary groups are named by the scalar
-            # This assumption fails for 4 of the scalars.
-            # forcing data is just a concentration on the SJ flow.
-            scalar_bc_conc=1
-            hits=[ idx
-                   for idx,boundary in enumerate(boundaries)
-                   if boundary[2]==scalar_name ]
+        # Does not yet allow for time-varying BC concentrations!
+        boundary_conc=np.zeros(len(boundaries),'f8')
 
-            if len(hits)==0:
-                # Currently fails on stormwater
-                print("Failed to find boundary group for this scalar (%s)"%scalar_name)
-                if scalar_name=='stormwater':
-                    assert False # DBG
-                continue
-
-            hit_concs=np.ones(len(hits), 'f8') # old code, assuming unit concentration
-        else:
-            # Does not yet allow for time-varying BC concentrations!
-            boundary_conc=np.zeros(len(boundaries),'f8')
-            
-            # Partially robust approach
-            # Scan the individual item blocks
-            for bc_block in bc_blocks:
-                # rows/cols can be either scalars/bc_links or bc_links/scalars
-                # and this dictates the form of the matrix
-                rows,cols,data=bc_block
-                if rows[0]=='concentration':
-                    concs=rows[1]
-                    items=cols[1]
-                    conc_item=data
-                else:
-                    concs=cols[1]
-                    items=rows[1]
-                    conc_item=data[1].T
-                if scalar_name in concs:
-                    conc_idx=list(concs).index(scalar_name.lower())
-                    scalar_data=conc_item[conc_idx,:]
-                    for item,datum in zip(items,scalar_data):
-                        for idx,(boundary_id,boundary_name,boundary_group) in enumerate(boundaries):
-                            #  
-                            if ( (idx+1==item) or
-                                 ( item.lower() in [ boundary_id.lower(),
-                                                     boundary_name.lower(),
-                                                     boundary_group.lower() ] ) ):
-                                boundary_conc[idx]=datum
-            # here hits is zero-based, positive indices into the list of boundary exchanges,
-            # should be same as previous, fragile code
-            hits=np.nonzero(boundary_conc)[0]
-            hit_concs=boundary_conc[ boundary_conc!=0.0 ]
+        # Partially robust approach
+        # Scan the individual item blocks
+        for bc_block in bc_blocks:
+            # rows/cols can be either scalars/bc_links or bc_links/scalars
+            # and this dictates the form of the matrix
+            rows,cols,data=bc_block
+            if rows[0]=='concentration':
+                concs=rows[1]
+                items=cols[1]
+                conc_item=data
+            else:
+                concs=cols[1]
+                items=rows[1]
+                conc_item=data[1].T
+            if scalar_name in concs:
+                conc_idx=list(concs).index(scalar_name.lower())
+                scalar_data=conc_item[conc_idx,:]
+                for item,datum in zip(items,scalar_data):
+                    for idx,(boundary_id,boundary_name,boundary_group) in enumerate(boundaries):
+                        #  
+                        if ( (idx+1==item) or
+                             ( item.lower() in [ boundary_id.lower(),
+                                                 boundary_name.lower(),
+                                                 boundary_group.lower() ] ) ):
+                            boundary_conc[idx]=datum
+        # here hits is zero-based, positive indices into the list of boundary exchanges,
+        # should be same as previous, fragile code
+        hits=np.nonzero(boundary_conc)[0]
+        hit_concs=boundary_conc[ boundary_conc!=0.0 ]
             
         poi=hyd.pointers
 
@@ -270,6 +273,11 @@ for run_dir in runs:
         conc_dnum=utils.to_dnum(conc.time.values)
         time_sel=np.searchsorted(lp_hyd.t_dn, conc_dnum)
 
+        lp_scalar=conc.scalar.values
+        for i in range(Nagg):
+            lp_scalar[:,i] = lp_hyd.lowpass( lp_scalar[:,i] )
+        conc['scalar']=conc.scalar.dims, lp_scalar
+
         # This assumes that all inflows enter with the same concentration.  That
         # won't be true for salinity, but okay for the conservative tracers.
         conc['bc_mass_inflow']= ('time','face'), element_mass_influx[time_sel,:]
@@ -277,9 +285,3 @@ for run_dir in runs:
         conc['bc_water_inflow']= ('time','face'), element_water_influx[time_sel,:]
         conc.to_netcdf(nc_bc_fn)
         
-# Fairly successful - missing
-# continuity, delta, sea, millbrae_burlingame, and stormwater
-
-# Those should come together now with the more sophisticated parsing of the inp file.
-
-##
