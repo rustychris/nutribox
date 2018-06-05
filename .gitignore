@@ -2,3 +2,5 @@ __pycache__
 hydro-*
 scalar_data
 *.pyc
+histories
+scalar_data_agg_his
